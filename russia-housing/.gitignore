@@ -1,0 +1,5 @@
+.ipy*
+input/*
+python/.ipy*
+R/.Rhistory
+R/scratch.R

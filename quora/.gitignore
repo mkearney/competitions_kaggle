@@ -1,0 +1,5 @@
+data/*
+output/*
+R/scraps.R
+R/theseaurus.R
+R/topicmodel.R
