@@ -121,16 +121,24 @@ test <- dplyr::left_join(test, api, by = "year")
 library(gbm)
 
 ## spec number of trees
-n.trees <- 3000
+n.trees <- 500
+
+## discard misssing
+tc <- train[!apply(train[, names(train) != "int"], 1, function(x) any(is.na(x))), ]
+tc <- tc[, sapply(tc, var, na.rm = TRUE) > 0]
+
+## distribution
+dist <- gbm:::guessDist(tc$price_doc)
+dist <- "poisson"
 
 ## set params and run model
 m1 <- gbm(price_doc ~ .,
-          data = var.omit(train, "id"),
+          data = var.omit(tc, "id"),
           n.trees = n.trees,
           interaction.depth = 5,
           shrinkage = .05,
           n.minobsinnode = 5,
-          distribution = "poisson",
+          distribution = dist,
           train.fraction = .5,
           bag.fraction = .5)
 
@@ -141,7 +149,6 @@ summary(m1, n.trees = n.trees)
 ##best.iter <- gbm.perf(m1, method = "cv")
 ##summary(m1, n.trees = best.iter)
 
-
 ## generate predictions
 test$price_doc <- predict(m1, newdata = test,
                           n.trees = n.trees,
@@ -149,24 +156,30 @@ test$price_doc <- predict(m1, newdata = test,
 
 ## reshape?
 ##test$price_doc <- reshapedist(test$price_doc, mean(train$price_doc))
-
+test$price_doc <- ((test$price_doc - min(test$price_doc)) + 100000) * .675
 ## check distribution of preds
-hist(test$price_doc, col = "gray", breaks = 50)
-hist(train$price_doc, col = "gray", breaks = 40)
-
+hist(test$price_doc, col = "gray", breaks = 40, xlim = c(0, 60000000))
+hist(train$price_doc, col = "gray", breaks = 40, xlim = c(0, 60000000))
 sum(is.na(test$price_doc))
 range(test$price_doc)
+range(train$price_doc)
 sort(test$price_doc, decreasing = TRUE)[1:20]
 mean(test$price_doc)
 mean(train$price_doc)
 
-bst <- read.csv("../input/submit7.csv")
+bst <- read.csv("../input/submit22.csv")
 
-plot(bst$price_doc, test$price_doc, pch = 1, bty = "n", tcl = -.15, col = "#00000066")
+plot(bst$price_doc, test$price_doc,
+     pch = 20,
+     cex = 2,
+     bty = "n",
+     tcl = -.15,
+     col = "#00000022")
 mean(bst$price_doc)
+mean(test$price_doc)
 
 ## save predictions
 write.csv(test[, c("id", "price_doc")],
-          "../input/submit21.csv",
+          "../input/submit24.csv",
           row.names = FALSE)
 
