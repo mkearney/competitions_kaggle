@@ -13,34 +13,30 @@ test <- read.csv(file.path(ddir, "test.csv"))
 ## missing on DV
 test$price_doc <- NA
 
-## combine data sets
-##tt <- rbind(test, train)
-
 ## read in funs
 source("funs.R")
 
-## train data
+##----------------------------------------------------------------------------##
+##                        WRANGLE/MUNGE TRAIN DATA
+##----------------------------------------------------------------------------##
+
+## id numeric (but not id or dv) vars
 nums <- sapply(train, is.numeric) & !names(train) %in% c("id", "price_doc")
+
+## convert to numeric (int to numeric)
 train[nums] <- lapply(train[nums], as.numeric)
+
+## create year var from timestamp var
+train$year <- as.double(substr(as.character(train$timestamp), 1, 4))
+
+## convert timestamp to numeric type
 train$timestamp <- as.numeric(as.Date(as.character(train$timestamp)))
 
-## test data
-nums <- sapply(test, is.numeric) & !names(test) %in% c("id", "price_doc")
-test[nums] <- lapply(test[nums], as.numeric)
-test$timestamp <- as.numeric(as.Date(as.character(test$timestamp)))
-
-##
-##train[, !names(train) %in% c("id", "price_doc")] <- intnum(var.omit(train))
-##test[, !names(test) %in% c("id", "price_doc")] <- intnum(var.omit(test))
-
-## drop missing
-##train <- var.omit(train[complete.cases(train), ], "id")
-
-## factors
+## id factor (but not id or dv) vars
 fcts <- (sapply(train, is.character) | sapply(train, is.factor)) &
     !names(train) %in% c("id", "price_doc")
 
-## frequency proportions
+## function to est freq proportions
 fct_prop <- function(x) {
     table(x) / sum(table(x), na.rm = TRUE)
 }
@@ -48,56 +44,90 @@ fct_prop <- function(x) {
 ## exclude sub area
 fctprops <- lapply(train[which(fcts)], fct_prop)
 
-## drop and keep these ones
+## drop unbalanced factors and keep those with at least 5% var
 fcts2kp <- which(fcts)[sapply(fctprops, function(x) all(x > .05))]
 
 ## convert keepers to numeric
 train[fcts2kp] <- lapply(train[fcts2kp], function(x) as.numeric(as.factor(x)))
 
-## checkout sub area
-sort(table(train$sub_area))
+## checkout sub area variable
+sort(table(train$sub_area), decreasing = TRUE)[1:20]
 
-## try dummy coding by poselenie keywords
+## try dummy coding by "poselenie" keyword
 train$sub_area <- as.numeric(grepl("Poselenie", train$sub_area))
 
-## drop non-numeric
+## drop non-numeric for final data set
 train <- train[sapply(train, is.numeric) | names(train) %in% c("id", "price_doc")]
 
-## do same to test
+##----------------------------------------------------------------------------##
+##                        WRANGLE/MUNGE TEST DATA
+##----------------------------------------------------------------------------##
+
+## do corresponding conversions to test data
+nums <- sapply(test, is.numeric) & !names(test) %in% c("id", "price_doc")
+test[nums] <- lapply(test[nums], as.numeric)
+test$year <- as.double(substr(as.character(test$timestamp), 1, 4))
+test$timestamp <- as.numeric(as.Date(as.character(test$timestamp)))
 fcts <- (sapply(test, is.character) | sapply(test, is.factor)) &
     !names(test) %in% c("id", "price_doc")
 test[fcts] <- lapply(test[fcts], function(x) as.numeric(as.factor(x)))
 test$sub_area <- as.numeric(grepl("Poselenie", test$sub_area))
 test <- test[names(test) %in% names(train)]
 
+##----------------------------------------------------------------------------##
+##                         MERGE WITH EXTERNAL DATA
+##----------------------------------------------------------------------------##
 
-## gbm model
+## load dplyr
+library(dplyr)
+
+## spas data
+spas <- readr::read_csv("../input/SPASTT01RUM661N.csv")
+spas$year <- as.double(substr(spas$DATE, 1, 4))
+spas <- spas %>%
+    group_by(year) %>%
+    summarise(spas = mean(SPASTT01RUM661N, na.rm = TRUE)) %>%
+    ungroup()
+
+## int data
+int <- readr::read_csv("../input/INTDSRRUM193N.csv")
+int$year <- as.double(substr(int$DATE, 1, 4))
+int <- int %>%
+    group_by(year) %>%
+    summarise(int = mean(INTDSRRUM193N, na.rm = TRUE)) %>%
+    ungroup()
+
+## api data
+api <- readr::read_csv("../input/API_RUS_DS2_en_csv_v2.csv", skip = 3)
+api <- data.frame(year = 2009:2015, apirusds2 = as.double(unclass(api[60, 54:60])))
+api <- api %>%
+    group_by(year) %>%
+    summarise(api = mean(apirusds2, na.rm = TRUE)) %>%
+    ungroup()
+
+## merge
+train <- dplyr::left_join(train, spas, by = "year")
+test <- dplyr::left_join(test, spas, by = "year")
+
+train <- dplyr::left_join(train, int, by = "year")
+test <- dplyr::left_join(test, int, by = "year")
+
+train <- dplyr::left_join(train, api, by = "year")
+test <- dplyr::left_join(test, api, by = "year")
+
+##train <- train[complete.cases(train), ]
+
+## load gbm package
 library(gbm)
 
-spas <- readr::read_csv("../input/SPASTT01RUM661N.csv")
-spas$build_year <- as.double(difftime(spas$DATE, as.Date("2010-01-01"), units = "days") / 365)
-
-int <- readr::read_csv("../input/INTDSRRUM193N.csv")
-int$build_year <- as.double(difftime(int$DATE, as.Date("2010-01-01"), units = "days") / 365)
-
-api <- readr::read_csv("../input/API_RUS_DS2_en_csv_v2.csv", skip = 3)
-api <- data.frame(build_year = 0:6, apirusds2 = as.double(unclass(api[60, 54:60])))
-
-train.trim <- left_join(train.trim, spas[, -1], by = "build_year")
-test <- left_join(test, spas[, -1], by = "build_year")
-
-train.trim <- left_join(train.trim, int[, -1], by = "build_year")
-test <- left_join(test, int[, -1], by = "build_year")
-
-train.trim <- left_join(train.trim, api, by = "build_year")
-test <- left_join(test, api, by = "build_year")
+## spec number of trees
+n.trees <- 3000
 
 ## set params and run model
-n.trees <- 1e3
 m1 <- gbm(price_doc ~ .,
           data = var.omit(train, "id"),
           n.trees = n.trees,
-          interaction.depth = 3,
+          interaction.depth = 5,
           shrinkage = .05,
           n.minobsinnode = 5,
           distribution = "poisson",
@@ -107,9 +137,9 @@ m1 <- gbm(price_doc ~ .,
 ## summary
 summary(m1, n.trees = n.trees)
 
-## find best iter
-best.iter <- gbm.perf(m1, method = "OOB")
-summary(m1, n.trees = best.iter)
+## if CV, find best iter (otherwise assume n.trees)
+##best.iter <- gbm.perf(m1, method = "cv")
+##summary(m1, n.trees = best.iter)
 
 
 ## generate predictions
@@ -121,7 +151,9 @@ test$price_doc <- predict(m1, newdata = test,
 ##test$price_doc <- reshapedist(test$price_doc, mean(train$price_doc))
 
 ## check distribution of preds
-hist(test$price_doc, col = "gray", breaks = 30)
+hist(test$price_doc, col = "gray", breaks = 50)
+hist(train$price_doc, col = "gray", breaks = 40)
+
 sum(is.na(test$price_doc))
 range(test$price_doc)
 sort(test$price_doc, decreasing = TRUE)[1:20]
@@ -135,15 +167,6 @@ mean(bst$price_doc)
 
 ## save predictions
 write.csv(test[, c("id", "price_doc")],
-          "../input/submit18.csv",
+          "../input/submit21.csv",
           row.names = FALSE)
 
-
-reshapedist <- function(x, avg) {
-    x <- x - (min(x, na.rm = TRUE) - 0)
-    (avg / mean(x, na.rm = TRUE)) * x
-}
-mean(test$price_doc)
-mean(train$price_doc)
-plot(reshapedist(test$price_doc, mean(train$price_doc)),
-     test$price_doc)
