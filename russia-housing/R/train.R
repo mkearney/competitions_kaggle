@@ -63,7 +63,7 @@ train <- train[sapply(train, is.numeric) | names(train) %in% c("id", "price_doc"
 ##                        WRANGLE/MUNGE TEST DATA
 ##----------------------------------------------------------------------------##
 
-## do corresponding conversions to test data
+## perform analogous transformations on test data
 nums <- sapply(test, is.numeric) & !names(test) %in% c("id", "price_doc")
 test[nums] <- lapply(test[nums], as.numeric)
 test$year <- as.double(substr(as.character(test$timestamp), 1, 4))
@@ -121,19 +121,19 @@ test <- dplyr::left_join(test, api, by = "year")
 library(gbm)
 
 ## spec number of trees
-n.trees <- 500
+n.trees <- 10000
 
 ## discard misssing
 tc <- train[!apply(train[, names(train) != "int"], 1, function(x) any(is.na(x))), ]
 tc <- tc[, sapply(tc, var, na.rm = TRUE) > 0]
 
 ## distribution
-dist <- gbm:::guessDist(tc$price_doc)
+##dist <- gbm:::guessDist(tc$price_doc)
 dist <- "poisson"
 
 ## set params and run model
 m1 <- gbm(price_doc ~ .,
-          data = var.omit(tc, "id"),
+          data = var.omit(train, "id"),
           n.trees = n.trees,
           interaction.depth = 5,
           shrinkage = .05,
@@ -154,9 +154,6 @@ test$price_doc <- predict(m1, newdata = test,
                           n.trees = n.trees,
                           type = "response")
 
-## reshape?
-##test$price_doc <- reshapedist(test$price_doc, mean(train$price_doc))
-test$price_doc <- ((test$price_doc - min(test$price_doc)) + 100000) * .675
 ## check distribution of preds
 hist(test$price_doc, col = "gray", breaks = 40, xlim = c(0, 60000000))
 hist(train$price_doc, col = "gray", breaks = 40, xlim = c(0, 60000000))
@@ -170,16 +167,41 @@ mean(train$price_doc)
 bst <- read.csv("../input/submit22.csv")
 
 plot(bst$price_doc, test$price_doc,
-     pch = 20,
-     cex = 2,
+     pch = 21,
+     cex = 1,
      bty = "n",
      tcl = -.15,
-     col = "#00000022")
+     bg = "#66666622",
+     col = "#00000044")
+
 mean(bst$price_doc)
 mean(test$price_doc)
 
 ## save predictions
 write.csv(test[, c("id", "price_doc")],
-          "../input/submit24.csv",
+          "../input/submit28.csv",
           row.names = FALSE)
 
+
+
+
+
+## caret version
+library(caret)
+
+#Get complete cases of dtrain
+completes <- complete.cases(dtrain)
+
+# Set training control so that we only 1 run forest on the entire set of complete cases
+trControl <- trainControl(method = 'none')
+
+# Run random forest on complete cases of dtrain. Exclude incineration_raion since it
+# only has 1 factor level
+rfmod <- train(price_doc ~ . - id - timestamp - incineration_raion,
+               method = 'rf',
+               data = dtrain[completes, ],
+               trControl = trControl,
+               tuneLength = 1,
+               importance = TRUE)
+
+varImp(rfmod)
