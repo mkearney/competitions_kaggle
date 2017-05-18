@@ -29,7 +29,7 @@ var.omit <- function(x, ...) {
 
 
 
-
+sum_stats(train)
 
 ## summary stats
 sum_stats <- function(data, digits = 2L) {
